@@ -1,277 +1,208 @@
-using GameTemplate.Core;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using Godot;
-using Renegade.Ads;
-using Renegade.Audio;
-using Renegade.Core;
-using Renegade.Dev;
-using Renegade.Looks;
+using OldMaid.Core;
+using Renegade.Cards;
 using Renegade.Play;
 using Renegade.Ui;
 
-namespace GameTemplate.Game;
+namespace OldMaid.Game;
 
 /// <summary>
-/// Starting point for a new game, built the way every Renegade game is: the shared stage (lights,
-/// reflection sky, table), a board on a rig that spins with a drag, the shared HUD (modes,
-/// difficulty, Style menu, Undo (ad), Start over, Settings with sound and freeze, a video
-/// tutorial behind Demo), material sounds, ads every 5th game, the winner's fire and the flight
-/// recorder. The placeholder game: tap the board to knock it, five knocks finish a game.
-/// Replace the board, the rules (src/Core), the tap, the tutorial pages and the clips with the
-/// real game. Tutorial clips: give each a case in PlayClip, then run
-/// addons/renegade_core/tools/Record-Clips.ps1 with their names.
+/// Old Maid with one to four computer players: one queen is taken out, the rest is shuffled and
+/// dealt round, everyone lays down their pairs on the felt, and then each in turn draws a card,
+/// unseen, from the hand of the player before them. On your turn, tap a card in their fan. Don't
+/// be the one left holding the Old Maid.
 /// </summary>
-public partial class Main : Node3D
+public partial class Main : CardGame
 {
-	public const string Title = "Game Template";
+	private readonly Dictionary<Card, Card3D> _nodes = new();
+	private OldMaidGame? _game;
+	private int _first;
+	private int _pairsDown;
 
-	/// <summary>Google's test ad units until the real ones exist in AdMob (see the release playbook).</summary>
-	private static readonly AdMobConfig AdUnits = AdMobConfig.Test;
+	protected override string Title => "Old Maid";
+	protected override string Hint => "Tap a card in their hand to draw it";
+	protected override bool HasLevels => false;
+	protected override int MinPlayers => 2;
+	protected override int MaxPlayers => 5;
+	protected override int DefaultPlayers => 3;
+	protected override IReadOnlyList<TutorialPage> TutorialPages => Tutorial.Pages;
+	protected override bool InProgress => _game is { IsOver: false };
 
-	private const float Thickness = 0.4f;
-
-	private readonly ImpactBank<Style> _impacts = new(Styles.Impact);
-	private readonly Scoreboard _wins = new();
-
-	private GameSettings _settings = null!;
-	private Counter _game = new(5);
-	private Node3D _rig = null!;
-	private Camera3D _camera = null!;
-	private MeshInstance3D _board = null!;
-	private SoundPool _sound = null!;
-	private GameHud _hud = null!;
-	private IAdService _ads = null!;
-	private AdSchedule? _adSchedule;
-	private SpinControl _spin = null!;
-	private Flames? _fire;
-
-	private bool _demo;
-	private bool _quitAfterDemo;
-	private string? _clip;
-	private float _demoTimer;
-
-	public override void _Ready()
+	protected override void AddSettings()
 	{
-		DevLog.Tag = "gt";
-		AudioWatch.Attach(this, Title);
-		_settings = GameSettings.Load();
-		ReadDeveloperArgs();
-		AudioServer.SetBusMute(0, _settings.Muted);
-
-		_camera = new Camera3D { Position = new Vector3(0, 10f, 6.5f), Fov = 52, KeepAspect = Camera3D.KeepAspectEnum.Width };
-		AddChild(_camera);
-		_camera.LookAt(new Vector3(0, -0.4f, 0.3f));
-		Stage.Build(this, -Thickness, new Color("1a0f09"));
-		_rig = new Node3D();
-		AddChild(_rig);
-		_board = new MeshInstance3D
+		Hud.AddToggle("Draw automatically", Flag("autodraw"), on =>
 		{
-			Mesh = new BoxMesh { Size = new Vector3(7, Thickness, 7) },
-			Position = new Vector3(0, -Thickness / 2, 0),
-			MaterialOverride = Materials.For(Styles.BoardLook(_settings.Board)),
-		};
-		_rig.AddChild(_board);
-		Stage.WarmUp(this, -Thickness, Sparkle.Halo);
-
-		_sound = new SoundPool();
-		AddChild(_sound);
-		_adSchedule ??= new AdSchedule(_settings.GamesSinceAd);
-		var theme = HudTheme.Warm;
-		_ads = AdServices.Create(this, AdUnits, _demo, new PlaceholderAds { TextColor = theme.Text });
-
-		_hud = new GameHud(theme);
-		AddChild(_hud);
-		// The HUD saves Sound and Freeze the board itself; add a game's own Settings rows with
-		// _hud.AddToggle and _hud.AddChoice (keep their values in _settings.Extra).
-		_hud.Build(new HudOptions(Title, "Tap the board  ·  Drag sideways to spin"), _settings);
-		_hud.NewGamePressed += OnNewGamePressed;
-		_hud.RestartPressed += OnRestartPressed;
-		_hud.SetTutorial(Tutorial.Pages);
-		_hud.ModeChosen += (mode, difficulty) =>
-		{
-			_settings.Mode = mode;
-			_settings.Difficulty = difficulty;
-			_settings.Save();
-		};
-		_hud.BoardChosen += style =>
-		{
-			_settings.Board = style;
-			_settings.Save();
-			_board.MaterialOverride = Materials.For(Styles.BoardLook(style));
-		};
-		_hud.PiecesChosen += style =>
-		{
-			_settings.Pieces = style;
-			_settings.Save();
-		};
-
-		_spin = new SpinControl(_rig, () => !_settings.FreezeBoard);
-		// Freeze the board also turns it back to where it started.
-		_spin.Frozen = () => _settings.FreezeBoard;
-		_spin.Tapped += OnTapped;
-		RefreshUi();
-		if (_clip != null)
-		{
-			_hud.Visible = false;
-			_ = PlayClip(_clip);
-			return;
-		}
-		if (!_demo)
-			_hud.OfferTutorialOnce(_settings);
-		_hud.ApplyDevFlags();
+			SetFlag("autodraw", on);
+			if (on && !Busy && _game is { IsOver: false, Current: 0 })
+				Run(Act(_game.Draw(Random.Next(_game.Hand(_game.Source).Count))));
+		});
 	}
 
-	public override void _UnhandledInput(InputEvent @event)
+	protected override async Task NewRound()
 	{
-		if (!_hud.MenuOpen)
-			_spin.HandleInput(@event);
+		int round = Round;
+		_nodes.Clear();
+		_game = null;
+		_pairsDown = 0;
+		SetScore();
+		var order = OldMaidGame.ShuffledDeck(Random);
+		var nodes = await ShuffleOnTable(order);
+		if (round != Round)
+			return;
+		for (int i = 0; i < order.Count; i++)
+			_nodes[order[i]] = nodes[i];
+		int first = _first;
+		_first = (_first + 1) % Players;
+		_game = new OldMaidGame(order, Players, Random, first);
+
+		// Deal all 51 round the table, starting with the first player.
+		await DealRound(nodes, Enumerable.Range(0, order.Count).Select(i => (first + i) % Players).ToList(), spacing: 0.06f);
+		if (round != Round)
+			return;
+		await PickUpAll(p => _game.Hand(p).Select(c => _nodes[c]));
+		SyncFans();
+		if (round != Round)
+			return;
+		Hud.SetRestartVisible(true);
+		Hud.SetStatus("Everyone lays down their pairs…", Muted);
+		var opening = _game.Opening();
+		// Everyone lays their pairs down at once, then the first turn begins.
+		var pairs = opening.OfType<Paired>().GroupBy(e => e.Player)
+			.Select(g => LayDown(g.Key, g.SelectMany(e => e.Cards).ToList())).ToList();
+		await Task.WhenAll(pairs);
+		SetScore();
+		await Act(opening.Where(e => e is not Paired).ToList());
 	}
 
-	/// <summary>A tap on the board: a knock in the board's material, sparks on the last one.</summary>
-	private void OnTapped(Vector2 screen)
+	/// <summary>Keeps every fan in the order its player holds the cards (yours sorted).</summary>
+	private void SyncFans()
 	{
-		if (_game.IsDone)
-			return;
-		var from = _camera.ProjectRayOrigin(screen);
-		var direction = _camera.ProjectRayNormal(screen);
-		if (direction.Y > -0.01f)
-			return;
-		var hit = from + direction * (-from.Y / direction.Y);
-		var local = _rig.ToLocal(hit);
-		if (Mathf.Abs(local.X) > 3.5f || Mathf.Abs(local.Z) > 3.5f)
-			return;
-		_hud.HideHint();
-		_game.Tap();
-		_sound.PlayImpact(_impacts.Random(_settings.Board), hit, 1f, Styles.GainDb(_settings.Board));
-		if (_game.IsDone)
+		for (int p = 1; p < Players; p++)
 		{
-			_wins.Win(first: true);
-			Sparkle.Burst(_rig, local + new Vector3(0, 0.3f, 0));
-			// The winner's fire: in a real game, set the winning pieces alight.
-			_fire = Flames.SetAlight(_rig, local, new[] { _board }, radius: 0.6f, size: 1.4f, withLight: true);
-		}
-		RefreshUi();
-	}
-
-	private void OnNewGamePressed()
-	{
-		bool adDue = _adSchedule!.GameFinished();
-		_settings.GamesSinceAd = _adSchedule.GamesSinceAd;
-		_settings.Save();
-		if (adDue)
-		{
-			DevLog.Write("ad: between-games interstitial");
-			_ads.ShowInterstitial(StartGame);
-		}
-		else
-		{
-			StartGame();
+			Fans[p].Reorder(_game!.Hand(p).Select(c => _nodes[c]));
+			Fans[p].Settle(0.2f);
 		}
 	}
 
-	private void StartGame()
+	/// <summary>A player's hand lays pairs face up on the heap in the middle of the table.</summary>
+	private async Task LayDown(int p, IReadOnlyList<Card> cards)
 	{
-		_fire?.Extinguish();
-		_fire = null;
-		_board.MaterialOverlay = null;
-		_game = new Counter(5);
-		RefreshUi();
-	}
-
-	/// <summary>
-	/// Start over mid-game. Against the computer it counts as resigning (a loss) unless the player
-	/// watches an ad; between two players it just asks first.
-	/// </summary>
-	private void OnRestartPressed()
-	{
-		if (_game.IsDone || _game.Count == 0)
+		var nodes = cards.Select(c => _nodes[c]).ToList();
+		var targets = new List<Transform3D>();
+		for (int i = 0; i < nodes.Count; i += 2)
 		{
-			StartGame();
-			return;
+			// Each pair a little apart and askew, so the heap looks dropped, not stacked.
+			float angle = (float)Random.NextDouble() * Mathf.Tau;
+			float r = 0.15f + (float)Random.NextDouble() * 0.55f;
+			var at = Table.Centre + new Vector3(Mathf.Cos(angle) * r * 1.3f, 0.003f * (_pairsDown + 1), Mathf.Sin(angle) * r * 0.7f);
+			float yaw = (float)Random.NextDouble() * Mathf.Tau;
+			targets.Add(FaceUpAt(at, yaw));
+			targets.Add(FaceUpAt(at + new Vector3(0.12f, 0.003f, 0.05f), yaw + 0.25f));
+			_pairsDown++;
 		}
-		_hud.AskRestart(_settings.Mode == GameMode.PlayerVsComputer && !_demo, countLoss =>
+		foreach (var node in nodes)
+			Fans[p].Remove(node);
+		Fans[p].Settle();
+		await Hands[p].Carry(nodes, targets, seconds: 0.45f, lift: 0.35f);
+	}
+
+	/// <summary>Acts out what happened, then hands over to whoever draws next.</summary>
+	private async Task Act(List<OldMaidEvent> events)
+	{
+		var game = _game!;
+		int round = Round;
+		Busy = true;
+		foreach (var e in events)
 		{
-			if (countLoss)
-				_wins.Win(first: false);
-			StartGame();
-		}, then => _ads.ShowRewarded(rewarded: then, closed: () => { }));
-	}
-
-	/// <summary>
-	/// Plays one scripted scene for the tutorial (with --clip=name), then quits; the HUD is hidden
-	/// so the clip shows only the board. Record them with addons/renegade_core/tools/Record-Clips.ps1.
-	/// </summary>
-	private async System.Threading.Tasks.Task PlayClip(string clip)
-	{
-		_settings.Muted = false;
-		await ToSignal(GetTree().CreateTimer(0.8), SceneTreeTimer.SignalName.Timeout);
-		switch (clip)
-		{
-			default:
-				for (int i = 0; i < 5; i++)
-				{
-					OnTapped(GetViewport().GetVisibleRect().Size / 2);
-					await ToSignal(GetTree().CreateTimer(0.6), SceneTreeTimer.SignalName.Timeout);
-				}
-				break;
-		}
-		await ToSignal(GetTree().CreateTimer(2.0), SceneTreeTimer.SignalName.Timeout);
-		GetTree().Quit();
-	}
-
-	private void RefreshUi()
-	{
-		_hud.SetScore($"Games {_wins.First}");
-		_hud.SetNewGameVisible(_game.IsDone);
-		_hud.SetRestartVisible(!_game.IsDone);
-		_hud.SetStatus(_game.IsDone ? "Done!" : $"Knock {_game.Count} of {_game.Target}", new Color("fff3e0"));
-		if (_game.IsDone && _demo && _quitAfterDemo && _wins.First >= 5)
-			GetTree().Quit();
-	}
-
-	public override void _Process(double delta)
-	{
-		float dt = (float)delta;
-		_spin.Process(dt);
-		if (!_demo)
-			return;
-		_demoTimer += dt;
-		if (_demoTimer < 0.3f)
-			return;
-		_demoTimer = 0f;
-		if (_game.IsDone)
-			OnNewGamePressed();
-		else
-			OnTapped(GetViewport().GetVisibleRect().Size / 2);
-	}
-
-	/// <summary>
-	/// Developer flags after `--` (or in user://dev_args.txt on a phone): `--log`, `--demo`,
-	/// `--quit-after-demo`, `--games-since-ad=4`, `--clip=knock` (plays a tutorial clip and quits),
-	/// plus the HUD's `--tutorial=N` and `--settings`. Add the game's own flags here.
-	/// </summary>
-	private void ReadDeveloperArgs()
-	{
-		foreach (var (name, value) in DevArgs.Read())
-		{
-			switch (name)
+			if (round != Round)
+				return;
+			switch (e)
 			{
-				case "--log":
-					DevLog.Enabled = true;
+				case Drew drew:
+				{
+					var node = _nodes[drew.Card];
+					await IntoFan(drew.Player, new[] { node });
+					string from = drew.From == 0 ? "you" : Names[drew.From];
+					Hud.SetStatus(drew.Player == 0
+						? $"You drew the {Describe(drew.Card)} from {Names[drew.From]}."
+						: $"{Names[drew.Player]} draws a card from {from}.", Muted);
+					await Pause(0.35f);
 					break;
-				case "--demo":
-					_demo = true;
-					_settings.Muted = false;
+				}
+				case Paired paired:
+					await LayDown(paired.Player, paired.Cards);
+					Hud.SetStatus(paired.Player == 0 ? $"A pair of {Card.RankName(paired.Cards[0].Rank, plural: true).ToLowerInvariant()}!" : $"{Names[paired.Player]} lays down a pair.", Bright);
 					break;
-				case "--quit-after-demo":
-					_quitAfterDemo = true;
+				case Shuffled:
+					SyncFans();
+					await Pause(0.2f);
 					break;
-				case "--games-since-ad":
-					_adSchedule = new AdSchedule(int.Parse(value));
+				case Out @out:
+					Say(@out.Player, "Safe!");
+					Hud.SetStatus(@out.Player == 0 ? "No cards left: you're safe!" : $"{Names[@out.Player]} has no cards left: safe!", Bright);
+					await Pause(0.9f);
+					Say(@out.Player, null);
 					break;
-				case "--clip":
-					_clip = value;
-					break;
+				case TurnTo turn:
+					SetScore();
+					if (turn.Player != 0 || Demo || Flag("autodraw"))
+					{
+						Hud.SetStatus(turn.Player == 0 ? $"You draw from {Names[turn.From]}." : $"{Names[turn.Player]} draws from {Who(turn.From)}.", Muted);
+						await Pause(0.7f);
+						if (round != Round)
+							return;
+						await Act(game.Draw(Random.Next(game.Hand(turn.From).Count)));
+						return;
+					}
+					Busy = false;
+					Hud.SetStatus($"Your turn: tap a card in {Names[turn.From]}'s hand.", Bright);
+					return;
+				case GameOver over:
+				{
+					SetScore();
+					var maid = _nodes[game.Hand(over.Loser).Single()];
+					// The Old Maid is shown to the table.
+					Fans[over.Loser].Remove(maid);
+					var show = FaceUpAt(Table.Centre + new Vector3(0, 0.08f, 0.55f), 0);
+					await PlayToTable(over.Loser, maid, show);
+					Sparkle.Burst(this, show.Origin + Vector3.Up * 0.2f);
+					Finish(over.Loser == 0 ? "Oh no! You're left holding the Old Maid." : $"{Names[over.Loser]} is left holding the Old Maid. You're safe!",
+						over.Loser == 0 ? 1 : 0, over.Loser == 0 ? null : new[] { maid }, show.Origin);
+					return;
+				}
 			}
 		}
+	}
+
+	private static string Describe(Card card) => $"{Card.RankName(card.Rank).ToLowerInvariant()} of {card.Suit.ToString().ToLowerInvariant()}";
+
+	private void SetScore()
+	{
+		var game = _game;
+		if (game == null)
+		{
+			Hud.SetScore($"Safe {Wins.First} of {Wins.First + Wins.Second}");
+			return;
+		}
+		var counts = Enumerable.Range(0, Players).Select(p => $"{(p == 0 ? "you" : Names[p])} {game.Hand(p).Count}");
+		Hud.SetScore($"Cards: {string.Join(" · ", counts)}   ·   Safe {Wins.First} of {Wins.First + Wins.Second}");
+	}
+
+	protected override void Tapped(Vector3 origin, Vector3 direction, Vector2 screen)
+	{
+		if (_game is not { IsOver: false, Current: 0 } game)
+			return;
+		var from = game.Source;
+		var hit = HitCard(Fans[from].Cards, origin, direction);
+		if (hit == null)
+			return;
+		int index = game.Hand(from).ToList().IndexOf(hit.Card);
+		if (index < 0)
+			return;
+		Hud.HideHint();
+		Run(Act(game.Draw(index)));
 	}
 }

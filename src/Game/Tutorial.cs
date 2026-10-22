@@ -1,21 +1,18 @@
 using System.Collections.Generic;
 using Renegade.Ui;
 
-namespace GameTemplate.Game;
+namespace OldMaid.Game;
 
-/// <summary>
-/// The guided tour behind the Demo button: a few short pages, each with a looping clip recorded
-/// from the game itself (see Main.PlayClip and addons/renegade_core/tools/Record-Clips.ps1).
-/// Text only, no voice. A page without a clip (Video = null) just shows its text.
-/// </summary>
+/// <summary>The guided tour behind the Demo button: a few short pages.</summary>
 public static class Tutorial
 {
 	public static readonly IReadOnlyList<TutorialPage> Pages = new[]
 	{
-		new TutorialPage("Knock five times",
-			"Tap the board to knock on it. Five knocks finish a game, and the board catches fire. Replace this page with the real game's rules.",
-			"res://tutorial/knock.ogv"),
-		new TutorialPage("Tips",
-			"Drag sideways to spin the board, or freeze it in Settings."),
+		new TutorialPage("The Old Maid",
+			"One queen is taken out of the deck, so one queen can never make a pair: she's the Old Maid. The rest is dealt out, and everyone lays down their pairs."),
+		new TutorialPage("Draw",
+			"On your turn, tap a card in the hand of the player before you to draw it, unseen. If it makes a pair, it goes straight down. Then the next player draws from you."),
+		new TutorialPage("Get out",
+			"Run out of cards and you're safe. The last player left, holding the Old Maid, loses. Play with up to five in Settings › Players."),
 	};
 }

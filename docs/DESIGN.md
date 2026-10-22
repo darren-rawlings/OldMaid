@@ -22,3 +22,8 @@ Players (2–5), Draw automatically.
 ## Scope for version 1
 Everything above. Draws are blind, so there are no computer levels. Later: tutorial clips,
 a "tease" (the computer fanning the Old Maid up a little to tempt you).
+
+## Changes from Darren's notes (2026-10-22)
+- You draw from the player on your left (and so on round the table).
+- On your turn that player holds their cards out to you, spread wide, so each card is easy to tap.
+- Once you're safe, the computers play on at double speed.

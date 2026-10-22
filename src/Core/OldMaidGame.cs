@@ -30,7 +30,8 @@ public sealed record GameOver(int Loser) : OldMaidEvent;
 /// Old Maid for 2 to 5 (the Bicycle rules): one queen is taken out of the deck, so one queen can
 /// never be paired: she's the Old Maid. All 51 cards are dealt out, as evenly as they go. Everyone
 /// lays down the pairs they hold. Then, in turn, each player draws a card, unseen, from the hand
-/// of the player before them; a pair is laid down at once. A player with no cards is out (safe).
+/// of the player on their left (the next player still in); a pair is laid down at once, and the
+/// player drawn from goes next. A player with no cards is out (safe).
 /// Whoever is left holding the Old Maid loses.
 /// </summary>
 public sealed class OldMaidGame
@@ -84,8 +85,8 @@ public sealed class OldMaidGame
 	public bool IsOver { get; private set; }
 	public int Loser { get; private set; } = -1;
 
-	/// <summary>The player the current player draws from: the nearest one before them still in.</summary>
-	public int Source => Before(Current);
+	/// <summary>The player the current player draws from: the nearest one on their left (after them) still in.</summary>
+	public int Source => After(Current);
 
 	private int Before(int player)
 	{

@@ -70,3 +70,18 @@ public class OldMaidTests
 		Assert.Equal(1, Enumerable.Range(0, players).Sum(p => game.Hand(p).Count));
 	}
 }
+
+public class DrawFromTheLeftTests
+{
+	[Fact]
+	public void EachPlayerDrawsFromThePlayerOnTheirLeft()
+	{
+		var random = new System.Random(3);
+		var game = new OldMaidGame(OldMaidGame.ShuffledDeck(random), 4, random, first: 0);
+		var turn = System.Linq.Enumerable.OfType<TurnTo>(game.Opening()).Last();
+		// Seat 1 sits on your left; it's the next player still in after the one drawing.
+		int expected = System.Linq.Enumerable.First(System.Linq.Enumerable.Range(1, 3).Select(k => (turn.Player + k) % 4), p => !game.IsOut(p));
+		Assert.Equal(expected, turn.From);
+		Assert.Equal(expected, game.Source);
+	}
+}

@@ -12,8 +12,9 @@ namespace OldMaid.Game;
 /// <summary>
 /// Old Maid with one to four computer players: one queen is taken out, the rest is shuffled and
 /// dealt round, everyone lays down their pairs on the felt, and then each in turn draws a card,
-/// unseen, from the hand of the player before them. On your turn, tap a card in their fan. Don't
-/// be the one left holding the Old Maid.
+/// unseen, from the hand of the player on their left. On your turn that player holds their cards out
+/// to you, spread wide: tap the one you want. Once you're safe, the rest plays out at double speed.
+/// Don't be the one left holding the Old Maid.
 /// </summary>
 public partial class Main : CardGame
 {
@@ -21,6 +22,7 @@ public partial class Main : CardGame
 	private OldMaidGame? _game;
 	private int _first;
 	private int _pairsDown;
+	private int _presented = -1;
 
 	protected override string Title => "Old Maid";
 	protected override string Hint => "Tap a card in their hand to draw it";
@@ -47,6 +49,8 @@ public partial class Main : CardGame
 		_nodes.Clear();
 		_game = null;
 		_pairsDown = 0;
+		_presented = -1;
+		SpeedBoost = 1;
 		SetScore();
 		var order = OldMaidGame.ShuffledDeck(Random);
 		var nodes = await ShuffleOnTable(order);
@@ -142,9 +146,11 @@ public partial class Main : CardGame
 					break;
 				case Out @out:
 					Say(@out.Player, "Safe!");
-					Hud.SetStatus(@out.Player == 0 ? "No cards left: you're safe!" : $"{Names[@out.Player]} has no cards left: safe!", Bright);
+					Hud.SetStatus(@out.Player == 0 ? "No cards left: you're safe! The others play on at double speed." : $"{Names[@out.Player]} has no cards left: safe!", Bright);
 					await Pause(0.9f);
-					Say(@out.Player, null);
+					// Only the computers are left: no need to make you wait.
+					if (@out.Player == 0)
+						SpeedBoost = 2;
 					break;
 				case TurnTo turn:
 					SetScore();
@@ -157,8 +163,12 @@ public partial class Main : CardGame
 						await Act(game.Draw(Random.Next(game.Hand(turn.From).Count)));
 						return;
 					}
+					await Present(turn.From);
+					if (round != Round)
+						return;
 					Busy = false;
-					Hud.SetStatus($"Your turn: tap a card in {Names[turn.From]}'s hand.", Bright);
+					Say(turn.From, "Take one!", 0);
+					Hud.SetStatus($"Your turn: tap one of {Names[turn.From]}'s cards.", Bright);
 					return;
 				case GameOver over:
 				{
@@ -177,6 +187,55 @@ public partial class Main : CardGame
 		}
 	}
 
+
+	/// <summary>
+	/// The player you draw from holds their cards out to you: the fan comes up in front of you,
+	/// backs towards you and spread wide, so every card is easy to tap. Their hand comes with it.
+	/// </summary>
+	private async Task Present(int seat)
+	{
+		_presented = seat;
+		var eye = Table.Camera.GlobalPosition;
+		var at = new Vector3(0, 1.45f, 0.85f);
+		var forward = (at - eye).Normalized();
+		var pivot = new Transform3D(Basis.LookingAt(-forward, Vector3.Up), at);
+		var fan = Fans[seat];
+		var hold = Hands[seat].Holder;
+		if (hold != null)
+			CardMotion.Fly(hold, pivot * (fan.Pivot.AffineInverse() * hold.GlobalTransform), 0.35f, lift: 0.1f);
+		fan.Pivot = pivot;
+		fan.Radius = 0.75f;
+		fan.Spread = 15f;
+		fan.MaxArc = 150f;
+		await Await(fan.Settle(0.35f));
+	}
+
+	/// <summary>The presented fan goes back to its player's seat.</summary>
+	private void Unpresent()
+	{
+		if (_presented < 0)
+			return;
+		int seat = _presented;
+		_presented = -1;
+		var fan = Fans[seat];
+		var hold = Hands[seat].Holder;
+		if (hold != null)
+			CardMotion.Fly(hold, Table.FanPivot[seat] * (fan.Pivot.AffineInverse() * hold.GlobalTransform), 0.35f, lift: 0.1f);
+		fan.Pivot = Table.FanPivot[seat];
+		fan.Radius = 0.5f;
+		fan.Spread = 9f;
+		fan.MaxArc = 80f;
+		fan.Settle(0.35f);
+	}
+
+	/// <summary>You take the card you tapped from the presented fan, which then goes back.</summary>
+	private async Task DrawPresented(int index)
+	{
+		Busy = true;
+		var events = _game!.Draw(index);
+		Unpresent();
+		await Act(events);
+	}
 	private static string Describe(Card card) => $"{Card.RankName(card.Rank).ToLowerInvariant()} of {card.Suit.ToString().ToLowerInvariant()}";
 
 	private void SetScore()
@@ -203,6 +262,6 @@ public partial class Main : CardGame
 		if (index < 0)
 			return;
 		Hud.HideHint();
-		Run(Act(game.Draw(index)));
+		Run(DrawPresented(index));
 	}
 }

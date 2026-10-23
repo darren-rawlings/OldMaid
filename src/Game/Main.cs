@@ -130,15 +130,15 @@ public partial class Main : CardGame
 					var node = _nodes[drew.Card];
 					await IntoFan(drew.Player, new[] { node });
 					string from = drew.From == 0 ? "you" : Names[drew.From];
-					Hud.SetStatus(drew.Player == 0
+					News(drew.Player == 0
 						? $"You drew the {Describe(drew.Card)} from {Names[drew.From]}."
-						: $"{Names[drew.Player]} draws a card from {from}.", Muted);
+						: $"{Names[drew.Player]} draws a card from {from}.");
 					await Pause(0.35f);
 					break;
 				}
 				case Paired paired:
 					await LayDown(paired.Player, paired.Cards);
-					Hud.SetStatus(paired.Player == 0 ? $"A pair of {Card.RankName(paired.Cards[0].Rank, plural: true).ToLowerInvariant()}!" : $"{Names[paired.Player]} lays down a pair.", Bright);
+					News(paired.Player == 0 ? $"You lay down a pair of {Card.RankName(paired.Cards[0].Rank, plural: true).ToLowerInvariant()}." : $"{Names[paired.Player]} lays down a pair of {Card.RankName(paired.Cards[0].Rank, plural: true).ToLowerInvariant()}.");
 					break;
 				case Shuffled:
 					SyncFans();
@@ -154,6 +154,7 @@ public partial class Main : CardGame
 					break;
 				case TurnTo turn:
 					SetScore();
+					ShowTurn(turn.Player);
 					if (turn.Player != 0 || Demo || Flag("autodraw"))
 					{
 						Hud.SetStatus(turn.Player == 0 ? $"You draw from {Names[turn.From]}." : $"{Names[turn.Player]} draws from {Who(turn.From)}.", Muted);

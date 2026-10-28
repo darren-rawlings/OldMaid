@@ -181,7 +181,7 @@ public partial class Main : CardGame
 					await PlayToTable(over.Loser, maid, show);
 					Sparkle.Burst(this, show.Origin + Vector3.Up * 0.2f);
 					Finish(over.Loser == 0 ? "Oh no! You're left holding the Old Maid." : $"{Names[over.Loser]} is left holding the Old Maid. You're safe!",
-						over.Loser == 0 ? 1 : 0, over.Loser == 0 ? null : new[] { maid }, show.Origin);
+						over.Loser == 0 ? 1 : 0, over.Loser == 0 ? null : new[] { maid }, show.Origin, winningSeats: Enumerable.Range(0, Players).Where(p => p != over.Loser));
 					return;
 				}
 			}

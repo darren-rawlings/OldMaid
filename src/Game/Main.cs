@@ -94,6 +94,7 @@ public partial class Main : CardGame
 	/// <summary>A player's hand lays pairs face up on the heap in the middle of the table.</summary>
 	private async Task LayDown(int p, IReadOnlyList<Card> cards)
 	{
+		ClipMoment("pairs", 5);
 		var nodes = cards.Select(c => _nodes[c]).ToList();
 		var targets = new List<Transform3D>();
 		for (int i = 0; i < nodes.Count; i += 2)
@@ -127,6 +128,7 @@ public partial class Main : CardGame
 			{
 				case Drew drew:
 				{
+					ClipMoment("draw", 6);
 					var node = _nodes[drew.Card];
 					await IntoFan(drew.Player, new[] { node });
 					string from = drew.From == 0 ? "you" : Names[drew.From];
@@ -195,6 +197,7 @@ public partial class Main : CardGame
 	/// </summary>
 	private async Task Present(int seat)
 	{
+		ClipMoment("draw", 6);
 		_presented = seat;
 		var eye = Table.Camera.GlobalPosition;
 		var at = new Vector3(0, 1.45f, 0.85f);
